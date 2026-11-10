@@ -223,36 +223,15 @@ static void audio_cb(void *ud, Uint8 *stream, int len) {
         stream += k * 4; n -= k; }
 }
 
-/* ------------------------------------------------------------------ the game's files (Android: unpacked from the app once) */
+/* ------------------------------------------------------------------ the game's files (Android: read straight from the app) */
 #ifdef __ANDROID__
-static int unpack_content(void) {
-    char marker[300]; snprintf(marker, sizeof marker, "%s.version", KK_CONTENT_DIR);
-    SDL_RWops *mv = SDL_RWFromFile("content_version.txt", "rb"); char want[64] = {0};
-    if (mv) { SDL_RWread(mv, want, 1, sizeof want - 1); SDL_RWclose(mv); }
-    FILE *f = fopen(marker, "rb"); char have[64] = {0}; if (f) { fread(have, 1, sizeof have - 1, f); fclose(f); }
-    if (want[0] && !strcmp(want, have)) return 1;
-    SDL_RWops *lst = SDL_RWFromFile("content_files.txt", "rb"); if (!lst) { port_log("no content list"); return 0; }
-    Sint64 n = SDL_RWsize(lst); char *list = malloc((size_t)n + 1); SDL_RWread(lst, list, 1, (size_t)n); list[n] = 0; SDL_RWclose(lst);
-    int total = 0; for (char *c = list; *c; c++) if (*c == '\n') total++;
-    int done = 0; char *line = strtok(list, "\n"); static char buf[1 << 16];
-    while (line) {
-        char src[300], dst[400]; snprintf(src, sizeof src, "content/%s", line); snprintf(dst, sizeof dst, "%s%s", KK_CONTENT_DIR, line);
-        for (char *p = dst + 1; *p; p++) if (*p == '/') { *p = 0; mkdir(dst, 0755); *p = '/'; }
-        SDL_RWops *in = SDL_RWFromFile(src, "rb"); FILE *out = fopen(dst, "wb");
-        if (in && out) { size_t k; while ((k = SDL_RWread(in, buf, 1, sizeof buf)) > 0) fwrite(buf, 1, k, out); }
-        if (in) SDL_RWclose(in); if (out) fclose(out);
-        done++;
-        if (done % 20 == 0 || done == total) {   /* a gold bar filling up while the game unpacks itself the first time */
-            glBindFramebuffer(GL_FRAMEBUFFER, 0); glDisable(GL_SCISSOR_TEST); glViewport(0, 0, g_sw, g_sh);
-            glClearColor(0.03f, 0.03f, 0.1f, 1); glClear(GL_COLOR_BUFFER_BIT); glEnable(GL_SCISSOR_TEST);
-            glScissor(g_sw / 5, g_sh / 2 - 12, (int)((g_sw * 3 / 5) * (float)done / (total ? total : 1)), 24); glClearColor(1.0f, 0.82f, 0.35f, 1); glClear(GL_COLOR_BUFFER_BIT);
-            glDisable(GL_SCISSOR_TEST); SDL_GL_SwapWindow(g_win); SDL_PumpEvents(); }
-        line = strtok(NULL, "\n");
-    }
-    free(list);
-    f = fopen(marker, "wb"); if (f) { fputs(want, f); fclose(f); }
-    port_log("unpacked %d files", done);
-    return 1;
+#include <ftw.h>
+static int rm_one(const char *p, const struct stat *st, int flag, struct FTW *fw) { (void)st; (void)flag; (void)fw; remove(p); return 0; }
+/* the game's files are read straight from the app now; the copy older versions unpacked onto the phone is removed to free the space */
+static void remove_old_copy(void) {
+    const char *in = SDL_AndroidGetInternalStoragePath(); if (!in) return;
+    char p[400]; snprintf(p, sizeof p, "%s/content", in); struct stat st; if (stat(p, &st) != 0) return;
+    nftw(p, rm_one, 16, FTW_DEPTH | FTW_PHYS); port_log("removed the old unpacked copy");
 }
 #endif
 
@@ -281,7 +260,7 @@ int main(int argc, char **argv) {
     if (!kk_gl_load(SDL_GL_GetProcAddress)) return 1;
     layout();
 #ifdef __ANDROID__
-    unpack_content();
+    kk_files_init(); remove_old_copy();
 #endif
     overlay_init();
     gfx_log("Kingdom Kart %s starting on %s", KK_VERSION, SDL_GetPlatform());
