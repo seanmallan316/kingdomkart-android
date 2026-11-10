@@ -27,7 +27,10 @@ jobs:
           path: wiiu
 
       - name: Get SDL (the library that runs the game on Android)
-        run: git clone -q --depth 1 -b release-2.30.0 https://github.com/libsdl-org/SDL android/app/jni/SDL
+        run: |
+          git clone -q --depth 1 -b release-2.30.0 https://github.com/libsdl-org/SDL android/app/jni/SDL
+          # newer Android NDKs removed ALooper_pollAll; ALooper_pollOnce takes the same arguments
+          sed -i 's/ALooper_pollAll(/ALooper_pollOnce(/' android/app/jni/SDL/src/sensor/android/SDL_androidsensor.c
 
       - name: PC test build - the game plays its own tour and takes pictures
         continue-on-error: true
