@@ -1,6 +1,8 @@
-# Builds the Kingdom Kart Android app (APK) on GitHub's computers every time the game changes.
-# 1. downloads the Godot engine, 2. checks the game by racing a whole race on its own,
-# 3. takes screenshots, 4. makes the signed APK, 5. puts the APK on the Releases page.
+# Builds Kingdom Kart for Android from the Wii U game itself (seanmallan316/kingdomkart), on GitHub's computers.
+# 1. takes the latest Wii U game: every road, character, screen, picture, model, song and sound
+# 2. builds it for a PC and lets the game's own test tour play itself (title, menus, a race), taking pictures
+# 3. builds the Android app (APK) with the phone parts (touch controls, Bluetooth controllers, sound, sharp graphics)
+# 4. puts the APK and the pictures on the Releases page
 name: Build Android APK
 
 on:
@@ -11,79 +13,61 @@ on:
 permissions:
   contents: write
 
-env:
-  GODOT_VERSION: "4.7.2"
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get the Wii U game
+        uses: actions/checkout@v4
+        with:
+          repository: seanmallan316/kingdomkart
+          path: wiiu
+
+      - name: Get SDL (the library that runs the game on Android)
+        run: git clone -q --depth 1 -b release-2.30.0 https://github.com/libsdl-org/SDL android/app/jni/SDL
+
+      - name: PC test build - the game plays its own tour and takes pictures
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev xvfb libgl1-mesa-dri libegl1 libgles2 > /dev/null
+          mkdir -p stage && cp -r wiiu/content stage/content && mkdir -p stage/content/port_ui && cp port/ui/*.png stage/content/port_ui/
+          OUT=$PWD/pc-tour bash port/build_pc.sh wiiu /usr/include/SDL2 $PWD/stage/content -DKK_TOUR -DKK_TOUR_ROAD=1
+          mkdir -p shots
+          KK_FRAMES=3300 KK_SHOTS=$PWD/shots KK_SHOT_EVERY=300 SDL_AUDIODRIVER=dummy timeout 1800 \
+            xvfb-run -a -s "-screen 0 1600x800x24" ./pc-tour/kingdomkart 2>&1 | tee tour.log | grep -E "picture /|error|Error|failed" || true
+          python3 -c "
+          import glob
+          from PIL import Image
+          for f in sorted(glob.glob('shots/*.ppm')): Image.open(f).save(f[:-4] + '.png')
+          " || true
+          ls shots
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Get Godot and its export templates
+      - name: Pack the game's files into the app
         run: |
-          V=$GODOT_VERSION
-          wget -q https://github.com/godotengine/godot/releases/download/${V}-stable/Godot_v${V}-stable_linux.x86_64.zip
-          wget -q https://github.com/godotengine/godot/releases/download/${V}-stable/Godot_v${V}-stable_export_templates.tpz
-          unzip -q Godot_v${V}-stable_linux.x86_64.zip
-          mv Godot_v${V}-stable_linux.x86_64 godot
-          mkdir -p ~/.local/share/godot/export_templates/${V}.stable
-          unzip -q Godot_v${V}-stable_export_templates.tpz
-          mv templates/* ~/.local/share/godot/export_templates/${V}.stable/
-          ./godot --version
+          A=android/app/src/main/assets
+          mkdir -p $A/content
+          cp -r wiiu/content/* $A/content/
+          mkdir -p $A/content/port_ui && cp port/ui/*.png $A/content/port_ui/
+          (cd $A/content && find . -type f | sed 's|^\./||' | sort) > $A/content_files.txt
+          echo "$(git -C wiiu rev-parse --short HEAD)-$(git rev-parse --short HEAD)-${{ github.run_number }}" > $A/content_version.txt
+          echo "files: $(wc -l < $A/content_files.txt), size: $(du -sh $A/content | cut -f1)"
 
-      - name: Tell Godot where the Android tools are
-        run: |
-          mkdir -p ~/.config/godot
-          for f in editor_settings-4.tres editor_settings-4.7.tres; do
-          cat > ~/.config/godot/$f <<EOF
-          [gd_resource type="EditorSettings" format=3]
-
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_SDK_ROOT"
-          export/android/java_sdk_path = "$JAVA_HOME"
-          EOF
-          done
-          cat ~/.config/godot/editor_settings-4.tres
-
-      - name: Import the game files
-        run: |
-          ./godot --headless --path game --import 2>&1 | tee import.log
-          if grep -E "SCRIPT ERROR|Parse Error|Failed to load|ERROR: .*\.gd" import.log; then echo "Problems while importing"; exit 1; fi
-
-      - name: Check the game - race a whole race automatically
-        run: |
-          KK_AUTOTEST=1 KK_SPEED=4 timeout 600 ./godot --headless --path game 2>&1 | tee autotest.log
-          if grep -E "SCRIPT ERROR|Parse Error|Invalid call|Invalid access|Invalid get|Invalid set" autotest.log; then echo "Script errors found"; exit 1; fi
-          grep -q "AUTOTEST OK" autotest.log
-
-      - name: Screenshots (software graphics, for checking the look)
-        continue-on-error: true
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb mesa-utils libgl1-mesa-dri > /dev/null
-          mkdir -p shots
-          KK_AUTOTEST=1 KK_SPEED=1 KK_SHOTS=$PWD/shots timeout 900 xvfb-run -a -s "-screen 0 1920x1080x24" \
-            ./godot --path game --rendering-method gl_compatibility --rendering-driver opengl3 --resolution 1920x1080 2>&1 | tee shots.log | grep AUTOTEST || true
-          ls -la shots
-
-      # The signing key is never stored in the code. It is kept in GitHub's private build storage so each new
-      # APK installs over the old one; if that storage is ever cleared a new key is made (then uninstall once).
       - name: Get the signing key
         uses: actions/cache@v4
         with:
           path: ~/kk-signing
           key: kingdomkart-signing-key-v1
 
-      - name: Make the signed APK
-        env:
-          GODOT_ANDROID_KEYSTORE_RELEASE_PATH: /home/runner/kk-signing/kingdomkart.keystore
-          GODOT_ANDROID_KEYSTORE_RELEASE_USER: kingdomkart
+      - name: Build the APK
         run: |
           mkdir -p ~/kk-signing
           if [ ! -f ~/kk-signing/kingdomkart.keystore ]; then
@@ -91,20 +75,23 @@ jobs:
             keytool -genkeypair -keystore ~/kk-signing/kingdomkart.keystore -alias kingdomkart -keyalg RSA -keysize 2048 \
               -validity 10000 -storepass "$(cat ~/kk-signing/pass.txt)" -keypass "$(cat ~/kk-signing/pass.txt)" -dname "CN=Kingdom Kart"
           fi
-          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$(cat ~/kk-signing/pass.txt)"
-          mkdir -p build
-          sed -i "s/^version\/code=.*/version\/code=${{ github.run_number }}/" game/export_presets.cfg
-          ./godot --headless --path game --export-release "Android" ../build/kingdomkart.apk 2>&1 | tee export.log
-          ls -la build
-          test -s build/kingdomkart.apk
+          export KK_KEYSTORE=$HOME/kk-signing/kingdomkart.keystore
+          export KK_KEYSTORE_PASS="$(cat ~/kk-signing/pass.txt)"
+          export KK_WIIU_SRC=$PWD/wiiu/src
+          export KK_VERSION_CODE=$((100 + ${{ github.run_number }}))
+          export KK_NDK_VERSION=$(ls $ANDROID_HOME/ndk | sort -V | tail -1)
+          echo "NDK $KK_NDK_VERSION"
+          cd android && chmod +x gradlew && ./gradlew --no-daemon -q assembleRelease
+          ls -la app/build/outputs/apk/release/
+          cp app/build/outputs/apk/release/app-release.apk ../kingdomkart.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: kingdomkart-apk
           path: |
-            build/kingdomkart.apk
-            shots/
-            autotest.log
+            kingdomkart.apk
+            shots/*.png
+            tour.log
 
       - name: Put the APK on the Releases page
         env:
@@ -112,5 +99,6 @@ jobs:
         run: |
           N=${{ github.run_number }}
           if ls shots/*.png >/dev/null 2>&1; then (cd shots && zip -q ../shots.zip *.png); fi
-          gh release create "build-$N" build/kingdomkart.apk autotest.log $( [ -f shots.zip ] && echo shots.zip ) \
-            --title "Kingdom Kart build $N" --notes "Android app. Download kingdomkart.apk on your phone and open it to install."
+          [ -f tour.log ] && cp tour.log tour_log.txt
+          gh release create "build-$N" kingdomkart.apk $( [ -f shots.zip ] && echo shots.zip ) $( [ -f tour_log.txt ] && echo tour_log.txt ) \
+            --title "Kingdom Kart build $N" --notes "The Wii U game on Android. Download kingdomkart.apk on your phone and open it to install."

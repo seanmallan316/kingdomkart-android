@@ -2,7 +2,7 @@
 """Draws the phone touch controls (controller style: stick, GAS, DRIFT, BRAKE, pause) and the app icon."""
 import sys
 from PIL import Image, ImageDraw, ImageFont
-OUT = "game/ui/"
+OUT = "port/ui/"
 FONT = "/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf"
 S = 4  # draw big, then shrink for smooth edges
 
@@ -105,3 +105,7 @@ for n, f in (("manna", manna), ("loaves", loaves), ("samaritan", samaritan), ("s
              ("jubilee", jubilee), ("fire", fire), ("water", water)):
     icon(n, f)
 print("items done")
+
+# ---- BACK (B) for the menus
+circle_button(160, "BACK", "B", (200, 200, 220), False).save(OUT + "btn_back.png")
+print("back done")

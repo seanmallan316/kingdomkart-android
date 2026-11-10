@@ -1,3 +1,17 @@
 build/
 game/.godot/
 *.tmp
+# files pulled from the Wii U game by tools/wiiu/sync.sh (they come from the Wii U repo on every build)
+godot_prototype/img/
+godot_prototype/data/game.json
+godot_prototype/data/tracks.json
+godot_prototype/models/
+!godot_prototype/models/jesus.glb
+godot_prototype/music/
+godot_prototype/sfx/
+godot_prototype/video/
+port/build-*/
+android/app/jni/SDL/
+android/app/src/main/assets/
+android/.gradle/
+android/app/build/

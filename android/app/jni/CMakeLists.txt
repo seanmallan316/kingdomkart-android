@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.6)
+project(KINGDOMKART C)
+# SDL's own source sits in jni/SDL (put there by the build)
+add_subdirectory(SDL)
+add_subdirectory(src)

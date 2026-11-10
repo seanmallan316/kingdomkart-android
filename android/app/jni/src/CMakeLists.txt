@@ -1,0 +1,16 @@
+# The game: every file of the Wii U game except its Wii U-only parts (drawing, controllers, sound output),
+# which are replaced by the files in port/.
+cmake_minimum_required(VERSION 3.6)
+set(PORT ${CMAKE_CURRENT_SOURCE_DIR}/../../../../port)
+file(GLOB GAME_SRC ${WIIU_SRC}/game/*.c ${WIIU_SRC}/sim/*.c ${WIIU_SRC}/world/*.c ${WIIU_SRC}/audio/*.c ${WIIU_SRC}/net/*.c)
+add_library(kkassets OBJECT ${WIIU_SRC}/render/assets.c)
+target_compile_definitions(kkassets PRIVATE gfx_texture_rgba=gfx_texture_rgba_bytes gfx_texture_rgba_ex=gfx_texture_rgba_ex_bytes)
+add_library(main SHARED ${GAME_SRC} ${PORT}/gfx_gles.c ${PORT}/sdl_main.c $<TARGET_OBJECTS:kkassets>)
+set(KK_FLAGS KK_CONTENT_DIR="/data/data/com.seanmallan.kingdomkart/files/content/" _GNU_SOURCE)
+target_compile_definitions(main PRIVATE ${KK_FLAGS})
+target_compile_definitions(kkassets PRIVATE ${KK_FLAGS})
+foreach(t main kkassets)
+  target_include_directories(${t} PRIVATE ${WIIU_SRC} ${PORT} ${CMAKE_CURRENT_SOURCE_DIR}/../SDL/include)
+  target_compile_options(${t} PRIVATE -O2 -w -std=gnu11 -ffast-math)
+endforeach()
+target_link_libraries(main SDL2 GLESv3 EGL android log m)
