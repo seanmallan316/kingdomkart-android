@@ -50,7 +50,11 @@ func _label(parent: Control, size: int, preset: Control.LayoutPreset, offset: Ve
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(l)
 	l.set_anchors_and_offsets_preset(preset, Control.PRESET_MODE_MINSIZE)
-	l.grow_horizontal = Control.GROW_DIRECTION_BOTH if preset == Control.PRESET_CENTER else l.grow_horizontal
+	if preset == Control.PRESET_CENTER:
+		l.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		l.grow_vertical = Control.GROW_DIRECTION_BOTH
+	elif preset == Control.PRESET_TOP_RIGHT or preset == Control.PRESET_BOTTOM_RIGHT:
+		l.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	l.position += offset
 	return l
 

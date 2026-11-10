@@ -7,7 +7,7 @@ plus the open land width on each side, the boost and bounce pads, and where each
 import json, math, os
 import numpy as np
 
-SCALE = 1.9           # bigger than the Wii U road: longer races, more room
+SCALE = 2.25           # bigger than the Wii U road: longer races, more room
 PER = 40              # road samples between two control points
 SHOULDER = 4.0
 FIELD_MAX = 40.0

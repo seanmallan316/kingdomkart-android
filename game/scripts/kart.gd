@@ -280,24 +280,40 @@ func _count_laps(race_time: float) -> void:
 
 func _ai_think() -> void:
 	ai_wobble += 0.016
-	var look := 8 + int(speed * 0.28)
+	var look := 6 + int(speed * 0.16)
 	var ti := (idx + look) % track.n
 	var lane := clampf(ai_lane + sin(ai_wobble * 0.7 + ai_lane) * 1.2, -track.half(ti) + 1.2, track.half(ti) - 1.2)
 	var target := track.pos[ti] + track.right[ti] * lane
 	var want := atan2(target.x - position.x, target.z - position.z)
 	var diff := wrapf(want - heading, -PI, PI)
-	in_steer = clampf(-diff * 2.6, -1.0, 1.0)
+	in_steer = clampf(-diff * 3.0, -1.0, 1.0)
 	in_gas = true
 	in_brake = false
-	# drift through the long bends like a good driver
-	var bend := wrapf(atan2(track.fwd[(idx + 30) % track.n].x, track.fwd[(idx + 30) % track.n].z) - heading, -PI, PI)
-	in_drift = absf(bend) > 0.55 and ai_skill > 0.9
+	# ease off for sharp bends so they don't run wide onto the grass
+	var bend := absf(wrapf(atan2(track.fwd[(idx + 14) % track.n].x, track.fwd[(idx + 14) % track.n].z) - heading, -PI, PI))
+	in_brake = bend > 0.9 and speed > top_speed() * 0.75
+	in_drift = false
 
 
 # ---------------------------------------------------------------- looks
 
+static var _soft_dot: Texture2D
+
+
+static func soft_dot() -> Texture2D:
+	if _soft_dot == null:
+		var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+		for y in 64:
+			for x in 64:
+				var d := Vector2(x - 31.5, y - 31.5).length() / 31.5
+				img.set_pixel(x, y, Color(1, 1, 1, clampf(1.0 - d, 0.0, 1.0) ** 1.6))
+		_soft_dot = ImageTexture.create_from_image(img)
+	return _soft_dot
+
+
 func _make_effects() -> void:
 	_spark_mat = StandardMaterial3D.new()
+	_spark_mat.albedo_texture = soft_dot()
 	_spark_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_spark_mat.albedo_color = Color(0.4, 0.75, 1.0)
 	_spark_mat.vertex_color_use_as_albedo = true
@@ -312,7 +328,7 @@ func _make_effects() -> void:
 		pm.gravity = Vector3(0, -12, 0)
 		pm.scale_min = 0.6; pm.scale_max = 1.2
 		p.process_material = pm
-		var q := QuadMesh.new(); q.size = Vector2(0.12, 0.12); q.material = _spark_mat
+		var q := QuadMesh.new(); q.size = Vector2(0.22, 0.22); q.material = _spark_mat
 		p.draw_pass_1 = q
 		p.amount = 40; p.lifetime = 0.35; p.emitting = false
 		p.position = Vector3(sx, 0.15, -1.0)
@@ -344,6 +360,7 @@ func _make_effects() -> void:
 	dmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
 	dmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	dmat.vertex_color_use_as_albedo = true
+	dmat.albedo_texture = soft_dot()
 	dq.material = dmat
 	_dust.draw_pass_1 = dq
 	_dust.amount = 24; _dust.lifetime = 0.8; _dust.emitting = false
