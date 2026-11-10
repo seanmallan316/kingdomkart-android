@@ -487,7 +487,7 @@ func _autotest_tap_resume(as_touch: bool) -> bool:
 			var m := InputEventMouseButton.new(); m.button_index = MOUSE_BUTTON_LEFT; m.position = at
 			m.global_position = at; m.pressed = pressed
 			ev = m
-		get_viewport().push_input(ev)
+		get_viewport().push_input(ev, true)   # already in game-screen coordinates
 		await get_tree().process_frame
 	for i in 5:
 		await get_tree().process_frame
