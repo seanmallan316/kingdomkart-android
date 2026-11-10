@@ -200,8 +200,9 @@ func _read_player_input() -> void:
 		return
 	player.in_steer = Input.get_axis("steer_left", "steer_right")
 	player.in_brake = Input.is_action_pressed("brake")
-	player.in_gas = not player.in_brake    # always on the gas unless braking: easy for kids
 	player.in_drift = Input.is_action_pressed("drift")
+	# GAS button (A on a controller); holding DRIFT keeps the gas on too, so one thumb can do both
+	player.in_gas = (Input.is_action_pressed("accelerate") or player.in_drift) and not player.in_brake
 
 
 func _bump_karts() -> void:

@@ -91,16 +91,37 @@ func _unhandled_input(e: InputEvent) -> void:
 
 # ---------------------------------------------------------------- touch buttons
 
+## Phone controls, laid out like a game controller with fewer buttons:
+## left thumb = steering stick (put your thumb down anywhere on the left side and slide),
+## right thumb = big GAS button, with DRIFT right next to it (DRIFT also keeps the gas on, so just roll
+## your thumb from GAS onto DRIFT and back), and a smaller BRAKE.
+const STICK_RADIUS := 130.0
+
+var _stick_base: Sprite2D
+var _stick_knob: Sprite2D
+var _stick_home := Vector2.ZERO
+var _stick_finger := -1
+
+
 func _make_touch() -> void:
 	_touch = Node2D.new()
 	add_child(_touch)
 	_touch.visible = DisplayServer.is_touchscreen_available() or OS.has_feature("mobile")
-	for spec in [["steer_left", "left"], ["steer_right", "right"], ["drift", "drift"], ["brake", "brake"]]:
+	_stick_base = Sprite2D.new()
+	_stick_base.texture = load("res://ui/stick_base.png")
+	_touch.add_child(_stick_base)
+	_stick_knob = Sprite2D.new()
+	_stick_knob.texture = load("res://ui/stick_knob.png")
+	_touch.add_child(_stick_knob)
+	for spec in [["accelerate", "gas", 150.0], ["drift", "drift", 118.0], ["brake", "brake", 88.0]]:
 		var b := TouchScreenButton.new()
 		b.texture_normal = load("res://ui/btn_%s.png" % spec[1])
 		b.texture_pressed = load("res://ui/btn_%s_on.png" % spec[1])
 		b.action = spec[0]
-		b.passby_press = spec[0].begins_with("steer")
+		b.passby_press = true          # slide your thumb between buttons without lifting it
+		var c := CircleShape2D.new()
+		c.radius = spec[2]
+		b.shape = c
 		_touch.add_child(b)
 		_buttons[spec[1]] = b
 	var p := TouchScreenButton.new()
@@ -112,16 +133,59 @@ func _make_touch() -> void:
 
 func _layout_touch() -> void:
 	var s := get_viewport().get_visible_rect().size
-	var m := 40.0
-	var big_b := 230.0
-	_buttons["left"].position = Vector2(m, s.y - big_b - m)
-	_buttons["right"].position = Vector2(m * 2.0 + big_b, s.y - big_b - m)
-	_buttons["drift"].position = Vector2(s.x - big_b - m, s.y - big_b - m - 170.0)
-	_buttons["brake"].position = Vector2(s.x - big_b - m - 260.0, s.y - 190.0 - m)
+	var gas := 300.0      # picture sizes
+	var drift := 250.0
+	var brake := 190.0
+	var gas_pos := Vector2(s.x - gas - 50.0, s.y - gas - 40.0)
+	_buttons["gas"].position = gas_pos
+	# DRIFT sits up and to the left of GAS, touching it, so one thumb rolls between them
+	_buttons["drift"].position = gas_pos + Vector2(-drift * 0.55, -drift * 0.70)
+	# BRAKE is further left and lower, away from the thumb's resting spot
+	_buttons["brake"].position = gas_pos + Vector2(-brake - 150.0, gas - brake + 10.0)
 	_buttons["pause"].position = Vector2(s.x * 0.5 - 60.0, 20.0)
-	# keep the place number clear of the drift button on phones
+	_stick_home = Vector2(80.0 + STICK_RADIUS + 40.0, s.y - STICK_RADIUS - 110.0)
+	_reset_stick()
+	# keep the place number clear of the buttons on phones
 	if _touch.visible:
-		_place.position.y = s.y - 420.0 - _place.size.y * 0.5
+		_place.position.y = 120.0
+
+
+func _reset_stick() -> void:
+	_stick_finger = -1
+	_stick_base.position = _stick_home
+	_stick_knob.position = _stick_home
+	Input.action_release("steer_left")
+	Input.action_release("steer_right")
+
+
+func _input(e: InputEvent) -> void:
+	if not _touch.visible or get_tree().paused:
+		return
+	var s := get_viewport().get_visible_rect().size
+	if e is InputEventScreenTouch:
+		var t := e as InputEventScreenTouch
+		if t.pressed and _stick_finger == -1 and t.position.x < s.x * 0.45 and t.position.y > s.y * 0.3:
+			# the stick appears under your thumb wherever you put it down on the left side
+			_stick_finger = t.index
+			_stick_base.position = t.position
+			_stick_knob.position = t.position
+		elif not t.pressed and t.index == _stick_finger:
+			_reset_stick()
+	elif e is InputEventScreenDrag:
+		var d := e as InputEventScreenDrag
+		if d.index == _stick_finger:
+			var off := (d.position - _stick_base.position).limit_length(STICK_RADIUS)
+			_stick_knob.position = _stick_base.position + off
+			var x := off.x / STICK_RADIUS
+			if absf(x) < 0.12:
+				x = 0.0
+			x = clampf(x * 1.15, -1.0, 1.0)
+			if x < 0.0:
+				Input.action_press("steer_left", -x); Input.action_release("steer_right")
+			elif x > 0.0:
+				Input.action_press("steer_right", x); Input.action_release("steer_left")
+			else:
+				Input.action_release("steer_left"); Input.action_release("steer_right")
 
 
 # ---------------------------------------------------------------- pause and results
