@@ -223,7 +223,7 @@ func _input(e: InputEvent) -> void:
 		if _tap_menu((e as InputEventScreenTouch).position):
 			get_viewport().set_input_as_handled()
 		return
-	if not _touch.visible or get_tree().paused:
+	if not _touch.visible or _pause_panel != null:
 		return
 	var s := get_viewport().get_visible_rect().size
 	if e is InputEventScreenTouch:
@@ -309,6 +309,7 @@ func _center(box: VBoxContainer) -> void:
 
 
 func show_pause(on: bool) -> void:
+	_reset_stick()
 	if on and _pause_panel == null:
 		_pause_panel = _panel("PAUSED")
 		var box := _pause_panel.get_child(0) as VBoxContainer

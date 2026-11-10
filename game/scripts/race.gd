@@ -19,6 +19,7 @@ var race_time := 0.0
 var done_t := 0.0
 var final_lap_played := false
 var autotest := false
+var race_paused := false
 var _shots_taken := {}
 
 var music: AudioStreamPlayer
@@ -172,6 +173,8 @@ func _make_karts() -> void:
 # ---------------------------------------------------------------- every frame
 
 func _physics_process(dt: float) -> void:
+	if race_paused:
+		return
 	if state == "countdown":
 		var before := ceili(count_t - 1.0)
 		count_t -= dt
@@ -333,18 +336,24 @@ func _show_results() -> void:
 	_play_sfx("sfx_win")
 
 
+## Pausing freezes the race itself (karts, clock, blessings, sound) instead of the whole game,
+## so the pause menu's buttons always keep working.
 func _toggle_pause() -> void:
 	if hud.results_shown:
 		return
-	get_tree().paused = not get_tree().paused
-	hud.show_pause(get_tree().paused)
+	race_paused = not race_paused
+	music.stream_paused = race_paused
+	if engine:
+		engine.stream_paused = race_paused
+	items.process_mode = Node.PROCESS_MODE_DISABLED if race_paused or Game.mode == "time" else Node.PROCESS_MODE_INHERIT
+	hud.show_pause(race_paused)
 
 
 func _on_menu_choice(choice: String) -> void:
-	get_tree().paused = false
 	match choice:
 		"resume":
-			hud.show_pause(false)
+			if race_paused:
+				_toggle_pause()
 		"again":
 			finished_race.emit(false)
 		"menu":
@@ -447,28 +456,44 @@ func _autotest_finish() -> void:
 
 
 func _autotest_pause() -> void:
+	# 1) a finger tap on "Keep Racing"
+	if not await _autotest_tap_resume(true):
+		return
+	# 2) a click (how a phone tap also reaches the button)
+	if not await _autotest_tap_resume(false):
+		return
+	print("AUTOTEST pause menu ok")
+
+
+func _autotest_tap_resume(as_touch: bool) -> bool:
 	_toggle_pause()
-	await get_tree().process_frame
-	await get_tree().process_frame
-	await get_tree().process_frame
+	for i in 3:
+		await get_tree().process_frame
 	var target: Button = null
 	for b in hud.find_children("*", "Button", true, false):
-		if (b as Button).text == "Keep Racing":
+		if (b as Button).text == "Keep Racing" and (b as Button).is_visible_in_tree():
 			target = b
 	if target == null:
 		print("AUTOTEST FAIL no Keep Racing button")
 		get_tree().quit(1)
-		return
+		return false
 	var at := target.get_global_rect().get_center()
-	var down := InputEventScreenTouch.new(); down.index = 0; down.position = at; down.pressed = true
-	Input.parse_input_event(down)
-	await get_tree().process_frame
-	var up := InputEventScreenTouch.new(); up.index = 0; up.position = at; up.pressed = false
-	Input.parse_input_event(up)
+	for pressed in [true, false]:
+		var ev: InputEvent
+		if as_touch:
+			var t := InputEventScreenTouch.new(); t.index = 0; t.position = at; t.pressed = pressed
+			ev = t
+		else:
+			var m := InputEventMouseButton.new(); m.button_index = MOUSE_BUTTON_LEFT; m.position = at
+			m.global_position = at; m.pressed = pressed
+			ev = m
+		get_viewport().push_input(ev)
+		await get_tree().process_frame
 	for i in 5:
 		await get_tree().process_frame
-	if get_tree().paused:
-		print("AUTOTEST FAIL pause menu did not respond to a tap")
+	if race_paused:
+		print("AUTOTEST FAIL pause menu did not respond to a %s" % ("tap" if as_touch else "click"))
 		get_tree().quit(1)
-	else:
-		print("AUTOTEST pause menu ok")
+		return false
+	await get_tree().create_timer(0.6, true, false, true).timeout
+	return true
