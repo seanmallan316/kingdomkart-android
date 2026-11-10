@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "1");
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) != 0) { SDL_Log("SDL: %s", SDL_GetError()); return 1; }
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC) != 0) { SDL_Log("SDL: %s", SDL_GetError()); return 1; }
     char *pref = SDL_GetPrefPath("Sean", "KingdomKart");
     if (pref) { char p[512]; snprintf(p, sizeof p, "%skingdomkart_log.txt", pref); g_log = fopen(p, "w"); gfx_set_logfile(g_log);
         snprintf(p, sizeof p, "%skingdomkart_save.txt", pref); save_set_path(p); }
@@ -287,9 +287,26 @@ int main(int argc, char **argv) {
     gfx_log("Kingdom Kart %s starting on %s", KK_VERSION, SDL_GetPlatform());
     int status = gfx_init();
     game_init(status);
-    SDL_AudioSpec want, have; memset(&want, 0, sizeof want); want.freq = 48000; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024; want.callback = audio_cb;
-    sfx_init(48000); music_init(48000);
-    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0); if (dev) SDL_PauseAudioDevice(dev, 0); else port_log("no sound: %s", SDL_GetError());
+    /* sound: try each of the phone's ways of playing sound until one opens (the plain Android one first: it works on every phone) */
+    SDL_AudioDeviceID dev = 0; SDL_AudioSpec want, have;
+#ifdef __ANDROID__
+    static const char *drivers[] = {"android", "openslES", "aaudio", NULL};
+#else
+    static const char *drivers[] = {NULL};
+#endif
+    for (int d = 0; !dev; d++) {
+        const char *drv = drivers[d];
+        if (drv) { if (SDL_AudioInit(drv) != 0) { port_log("sound: %s not available (%s)", drv, SDL_GetError()); continue; } }
+        else if (d > 0 || SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) { if (d > 0) break; port_log("sound: %s", SDL_GetError()); break; }
+        memset(&want, 0, sizeof want); want.freq = 48000; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024; want.callback = audio_cb;
+        dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+        if (!dev) { port_log("sound: %s could not open (%s)", drv ? drv : "default", SDL_GetError()); if (drv) SDL_AudioQuit(); }
+        else port_log("sound: %s, %d Hz, %d samples", SDL_GetCurrentAudioDriver(), have.freq, have.samples);
+        if (!drv) break;
+    }
+    int rate = dev ? have.freq : 48000;
+    sfx_init(rate); music_init(rate);
+    if (dev) SDL_PauseAudioDevice(dev, 0);
     open_controllers();
 
     /* test runs (the build machine): a fixed number of frames at a fixed step, pictures saved every so often */

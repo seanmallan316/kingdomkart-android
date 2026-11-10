@@ -32,23 +32,6 @@ jobs:
           # newer Android NDKs removed ALooper_pollAll; ALooper_pollOnce takes the same arguments
           sed -i 's/ALooper_pollAll(/ALooper_pollOnce(/' android/app/jni/SDL/src/sensor/android/SDL_androidsensor.c
 
-      - name: PC test build - the game plays its own tour and takes pictures
-        continue-on-error: true
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libsdl2-dev xvfb libgl1-mesa-dri libegl1 libgles2 > /dev/null
-          mkdir -p stage && cp -r wiiu/content stage/content && mkdir -p stage/content/port_ui && cp port/ui/*.png stage/content/port_ui/
-          OUT=$PWD/pc-tour bash port/build_pc.sh wiiu /usr/include/SDL2 $PWD/stage/content -DKK_TOUR -DKK_TOUR_ROAD=1
-          mkdir -p shots
-          KK_FRAMES=2700 KK_SHOTS=$PWD/shots KK_SHOT_EVERY=300 SDL_AUDIODRIVER=dummy timeout 1800 \
-            xvfb-run -a -s "-screen 0 1600x800x24" ./pc-tour/kingdomkart 2>&1 | tee tour.log | grep -E "picture /|error|Error|failed" || true
-          python3 -c "
-          import glob
-          from PIL import Image
-          for f in sorted(glob.glob('shots/*.ppm')): Image.open(f).save(f[:-4] + '.png')
-          " || true
-          ls shots
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -95,15 +78,45 @@ jobs:
           name: kingdomkart-apk
           path: |
             kingdomkart.apk
-            shots/*.png
-            tour.log
 
       - name: Put the APK on the Releases page
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           N=${{ github.run_number }}
-          if ls shots/*.png >/dev/null 2>&1; then (cd shots && zip -q ../shots.zip *.png); fi
-          [ -f tour.log ] && cp tour.log tour_log.txt
-          gh release create "build-$N" kingdomkart.apk $( [ -f shots.zip ] && echo shots.zip ) $( [ -f tour_log.txt ] && echo tour_log.txt ) \
+          gh release create "build-$N" kingdomkart.apk \
             --title "Kingdom Kart build $N" --notes "The Wii U game on Android. Download kingdomkart.apk on your phone and open it to install."
+
+  # a separate check that runs at the same time: the game plays its own tour on a PC and takes pictures
+  tour:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the Wii U game
+        uses: actions/checkout@v4
+        with:
+          repository: seanmallan316/kingdomkart
+          path: wiiu
+      - name: PC test build - the game plays its own tour and takes pictures
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libsdl2-dev xvfb libgl1-mesa-dri libegl1 libgles2 > /dev/null
+          mkdir -p stage && cp -r wiiu/content stage/content && mkdir -p stage/content/port_ui && cp port/ui/*.png stage/content/port_ui/
+          OUT=$PWD/pc-tour bash port/build_pc.sh wiiu /usr/include/SDL2 $PWD/stage/content -DKK_TOUR -DKK_TOUR_ROAD=1
+          mkdir -p shots
+          KK_FRAMES=2700 KK_SHOTS=$PWD/shots KK_SHOT_EVERY=300 SDL_AUDIODRIVER=dummy timeout 1800 \
+            xvfb-run -a -s "-screen 0 1600x800x24" ./pc-tour/kingdomkart 2>&1 | tee tour.log | grep -E "picture /|error|Error|failed" || true
+          python3 -c "
+          import glob
+          from PIL import Image
+          for f in sorted(glob.glob('shots/*.ppm')): Image.open(f).save(f[:-4] + '.png')
+          " || true
+          ls shots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tour-pictures
+          path: |
+            shots/*.png
+            tour.log
