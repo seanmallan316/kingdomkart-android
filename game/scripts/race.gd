@@ -25,6 +25,8 @@ var music: AudioStreamPlayer
 var engine: AudioStreamPlayer
 var _sfx: Array[AudioStreamPlayer] = []
 var _sfx_cache := {}
+var items: Items
+var _manna_left := 0      # time trial: three Manna to use, like the mushrooms in a time trial
 
 
 func _ready() -> void:
@@ -34,6 +36,16 @@ func _ready() -> void:
 	track.load_data("res://data/beth.json")
 	_make_hills()
 	_make_karts()
+	items = Items.new()
+	add_child(items)
+	items.setup(track, karts)
+	items.picked.connect(_on_item_picked)
+	items.used.connect(_on_item_used)
+	if Game.mode == "time":
+		items.process_mode = Node.PROCESS_MODE_DISABLED
+		items.visible = false
+		player.item = "manna"
+		_manna_left = 2
 	cam = Camera3D.new()
 	cam.fov = 72.0
 	cam.far = 1500.0
@@ -138,11 +150,13 @@ func _make_karts() -> void:
 			others.append(i)
 	others.shuffle()
 	var skill: float = [0.84, 0.93, 1.0][Game.difficulty]
-	for slot in KART_COUNT:
+	var count := 1 if Game.mode == "time" else KART_COUNT
+	var my_slot := 0 if Game.mode == "time" else PLAYER_SLOT
+	for slot in count:
 		var k := Kart.new()
 		add_child(k)
-		var ci: int = Game.player_char if slot == PLAYER_SLOT else others[slot % others.size()]
-		k.setup(track, ci, slot == PLAYER_SLOT)
+		var ci: int = Game.player_char if slot == my_slot else others[slot % others.size()]
+		k.setup(track, ci, slot == my_slot)
 		var row := slot / 2
 		var lat := -3.2 if slot % 2 == 0 else 3.2
 		k.place(0, 8.0 + row * 7.5 + (slot % 2) * 2.5, lat)
@@ -151,7 +165,7 @@ func _make_karts() -> void:
 		k.lap_done.connect(_on_lap)
 		k.sound.connect(_on_sound)
 		karts.append(k)
-		if slot == PLAYER_SLOT:
+		if slot == my_slot:
 			player = k
 
 
@@ -179,6 +193,8 @@ func _physics_process(dt: float) -> void:
 	for k in karts:
 		k.step(dt, race_time)
 	_bump_karts()
+	if state != "countdown" and Game.mode != "time":
+		items.step(dt, _place_of)
 	if state == "done":
 		done_t += dt
 		if done_t > 2.5 and not hud.results_shown:
@@ -189,6 +205,7 @@ func _process(dt: float) -> void:
 	_follow_camera(dt)
 	var order := _standings()
 	hud.update_race(player, order.find(player) + 1, race_time, track.laps)
+	hud.update_item(player.item, dt)
 	if engine and engine.playing:
 		engine.pitch_scale = 0.55 + clampf(absf(player.speed) / Kart.BASE_TOP, 0.0, 1.4) * 0.75
 
@@ -203,6 +220,29 @@ func _read_player_input() -> void:
 	player.in_drift = Input.is_action_pressed("drift")
 	# GAS button (A on a controller); holding DRIFT keeps the gas on too, so one thumb can do both
 	player.in_gas = (Input.is_action_pressed("accelerate") or player.in_drift) and not player.in_brake
+	if Input.is_action_just_pressed("use_item") and state == "racing" and player.item != "":
+		items.use(player, _place_of)
+
+
+func _place_of(k: Kart) -> int:
+	return _standings().find(k) + 1
+
+
+func _on_item_picked(k: Kart) -> void:
+	if k == player:
+		hud.item_picked()
+		_play_sfx("sfx_pickup")
+
+
+func _on_item_used(k: Kart, id: String) -> void:
+	if k == player:
+		hud.show_blessing(id)
+		_play_sfx("sfx_use_item")
+		if Game.mode == "time" and _manna_left > 0:
+			_manna_left -= 1
+			player.item = "manna"
+	elif k.position.distance_to(player.position) < 30.0:
+		_play_sfx("sfx_use_item", -10.0)
 
 
 func _bump_karts() -> void:
@@ -286,7 +326,10 @@ func _show_results() -> void:
 			t = race_time + left / maxf(k.top_speed() * 0.85, 1.0)
 		rows.append({"name": k.display_name, "time": t, "you": k == player})
 	rows.sort_custom(func(x, y): return x["time"] < y["time"])
-	hud.show_results(rows, Game.best_time)
+	var note := ""
+	if Game.mode == "story":
+		note = "Luke 2:11 - Unto you is born this day in the city of David a Saviour, which is Christ the Lord."
+	hud.show_results(rows, Game.best_time, note)
 	_play_sfx("sfx_win")
 
 
@@ -379,6 +422,9 @@ func _autotest_step() -> void:
 			print("AUTOTEST result %s laps=%d finished=%s time=%.1f" % [k.display_name, k.laps_done, k.finished, k.finish_time])
 		print("AUTOTEST race time %.1f" % race_time)
 		_autotest_finish.call_deferred()
+	if race_time >= 8.0 and not _shots_taken.has("pause"):
+		_shots_taken["pause"] = true
+		_autotest_pause()
 	if race_time > 600.0:
 		print("AUTOTEST FAIL race did not finish in 10 minutes; player lap %d progress %.0f" % [player.laps_done, player.race_progress])
 		get_tree().quit(1)
@@ -398,3 +444,31 @@ func _autotest_finish() -> void:
 	await get_tree().create_timer(1.0, true, false, true).timeout
 	print("AUTOTEST OK")
 	get_tree().quit(0)
+
+
+func _autotest_pause() -> void:
+	_toggle_pause()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var target: Button = null
+	for b in hud.find_children("*", "Button", true, false):
+		if (b as Button).text == "Keep Racing":
+			target = b
+	if target == null:
+		print("AUTOTEST FAIL no Keep Racing button")
+		get_tree().quit(1)
+		return
+	var at := target.get_global_rect().get_center()
+	var down := InputEventScreenTouch.new(); down.index = 0; down.position = at; down.pressed = true
+	Input.parse_input_event(down)
+	await get_tree().process_frame
+	var up := InputEventScreenTouch.new(); up.index = 0; up.position = at; up.pressed = false
+	Input.parse_input_event(up)
+	for i in 5:
+		await get_tree().process_frame
+	if get_tree().paused:
+		print("AUTOTEST FAIL pause menu did not respond to a tap")
+		get_tree().quit(1)
+	else:
+		print("AUTOTEST pause menu ok")

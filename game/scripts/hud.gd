@@ -17,6 +17,13 @@ var _pause_panel: Control
 var _results: Control
 var _touch: Node2D
 var _buttons := {}
+var _choice_buttons: Array = []
+var _last_choice_ms := 0
+var _item_icon: TextureRect
+var _item_frame: Panel
+var _blessing: Label
+var _blessing_tween: Tween
+var _spin_t := 0.0
 
 
 func _ready() -> void:
@@ -35,6 +42,7 @@ func _ready() -> void:
 	_big.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_big.modulate.a = 0.0
 	_make_touch()
+	_make_item_slot(root)
 	get_viewport().size_changed.connect(_layout_touch)
 	_layout_touch()
 
@@ -70,6 +78,56 @@ func big(text: String) -> void:
 	_big_tween.tween_property(_big, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	_big_tween.tween_interval(0.6)
 	_big_tween.tween_property(_big, "modulate:a", 0.0, 0.35)
+
+
+func _make_item_slot(root: Control) -> void:
+	_item_frame = Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.05, 0.05, 0.12, 0.55)
+	sb.border_color = Color(1.0, 0.82, 0.4)
+	sb.set_border_width_all(6)
+	sb.set_corner_radius_all(30)
+	_item_frame.add_theme_stylebox_override("panel", sb)
+	_item_frame.position = Vector2(40, 120)
+	_item_frame.size = Vector2(170, 170)
+	_item_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(_item_frame)
+	_item_icon = TextureRect.new()
+	_item_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_item_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_item_icon.position = Vector2(15, 15)
+	_item_icon.size = Vector2(140, 140)
+	_item_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_item_frame.add_child(_item_icon)
+	_blessing = _label(root, 54, Control.PRESET_CENTER_BOTTOM, Vector2(0, -250))
+	_blessing.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_blessing.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_blessing.modulate.a = 0.0
+
+
+## The blessing slot spins through the pictures for a moment, then lands on the one you got.
+func item_picked() -> void:
+	_spin_t = 1.0
+
+
+func show_blessing(id: String) -> void:
+	var b: Dictionary = Items.BLESSINGS[id]
+	_blessing.text = "%s  -  %s\n%s" % [b["name"], b["verse"], b["line"]]
+	if _blessing_tween:
+		_blessing_tween.kill()
+	_blessing.modulate.a = 1.0
+	_blessing_tween = create_tween()
+	_blessing_tween.tween_interval(2.4)
+	_blessing_tween.tween_property(_blessing, "modulate:a", 0.0, 0.5)
+
+
+func update_item(id: String, dt: float) -> void:
+	if _spin_t > 0.0:
+		_spin_t -= dt
+		var ids := Items.BLESSINGS.keys()
+		_item_icon.texture = load("res://ui/item_%s.png" % ids[int(Time.get_ticks_msec() / 80) % ids.size()])
+		return
+	_item_icon.texture = load("res://ui/item_%s.png" % id) if id != "" else null
 
 
 func update_race(player: Kart, place: int, t: float, laps: int) -> void:
@@ -113,7 +171,7 @@ func _make_touch() -> void:
 	_stick_knob = Sprite2D.new()
 	_stick_knob.texture = load("res://ui/stick_knob.png")
 	_touch.add_child(_stick_knob)
-	for spec in [["accelerate", "gas", 150.0], ["drift", "drift", 118.0], ["brake", "brake", 88.0]]:
+	for spec in [["accelerate", "gas", 150.0], ["drift", "drift", 118.0], ["brake", "brake", 88.0], ["use_item", "item", 88.0]]:
 		var b := TouchScreenButton.new()
 		b.texture_normal = load("res://ui/btn_%s.png" % spec[1])
 		b.texture_pressed = load("res://ui/btn_%s_on.png" % spec[1])
@@ -143,6 +201,8 @@ func _layout_touch() -> void:
 	# BRAKE is further left and lower, away from the thumb's resting spot
 	_buttons["brake"].position = gas_pos + Vector2(-brake - 150.0, gas - brake + 10.0)
 	_buttons["pause"].position = Vector2(s.x * 0.5 - 60.0, 20.0)
+	# ITEM sits above BRAKE, left of DRIFT: a short reach for the right thumb
+	_buttons["item"].position = gas_pos + Vector2(-brake - 200.0, -drift * 0.62)
 	_stick_home = Vector2(80.0 + STICK_RADIUS + 40.0, s.y - STICK_RADIUS - 110.0)
 	_reset_stick()
 	# keep the place number clear of the buttons on phones
@@ -159,6 +219,10 @@ func _reset_stick() -> void:
 
 
 func _input(e: InputEvent) -> void:
+	if (_pause_panel or results_shown) and e is InputEventScreenTouch and not (e as InputEventScreenTouch).pressed:
+		if _tap_menu((e as InputEventScreenTouch).position):
+			get_viewport().set_input_as_handled()
+		return
 	if not _touch.visible or get_tree().paused:
 		return
 	var s := get_viewport().get_visible_rect().size
@@ -216,9 +280,27 @@ func _button(parent: Control, text: String, choice: String) -> Button:
 	b.text = text
 	b.custom_minimum_size = Vector2(560, 120)
 	b.add_theme_font_size_override("font_size", 56)
-	b.pressed.connect(func(): menu_choice.emit(choice))
+	b.pressed.connect(func(): _choose(choice))
 	parent.add_child(b)
+	_choice_buttons.append([b, choice])
 	return b
+
+
+func _choose(choice: String) -> void:
+	var now := Time.get_ticks_msec()
+	if now - _last_choice_ms < 400:
+		return            # a tap can arrive both as a touch and as a click: act on it once
+	_last_choice_ms = now
+	menu_choice.emit(choice)
+
+
+func _tap_menu(pos: Vector2) -> bool:
+	for pair in _choice_buttons:
+		var b: Button = pair[0]
+		if is_instance_valid(b) and b.is_visible_in_tree() and b.get_global_rect().has_point(pos):
+			_choose(pair[1])
+			return true
+	return false
 
 
 func _center(box: VBoxContainer) -> void:
@@ -238,10 +320,11 @@ func show_pause(on: bool) -> void:
 	elif not on and _pause_panel:
 		_pause_panel.queue_free()
 		_pause_panel = null
+		_choice_buttons.clear()
 	_touch.visible = not on and (DisplayServer.is_touchscreen_available() or OS.has_feature("mobile"))
 
 
-func show_results(rows: Array, best: float) -> void:
+func show_results(rows: Array, best: float, note := "") -> void:
 	results_shown = true
 	_touch.visible = false
 	_results = _panel("RESULTS")
@@ -257,6 +340,15 @@ func show_results(rows: Array, best: float) -> void:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.add_child(l)
 		place += 1
+	if note != "":
+		var n := Label.new()
+		n.text = note
+		n.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		n.custom_minimum_size = Vector2(1300, 0)
+		n.add_theme_font_size_override("font_size", 36)
+		n.add_theme_color_override("font_color", Color(1.0, 0.9, 0.6))
+		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		box.add_child(n)
 	var rec := Label.new()
 	rec.text = "Best time on Bethlehem Road: %s" % Game.format_time(best)
 	rec.add_theme_font_size_override("font_size", 34)
@@ -270,13 +362,15 @@ func show_results(rows: Array, best: float) -> void:
 	again.text = "Race Again"
 	again.custom_minimum_size = Vector2(440, 110)
 	again.add_theme_font_size_override("font_size", 50)
-	again.pressed.connect(func(): menu_choice.emit("again"))
+	again.pressed.connect(func(): _choose("again"))
 	row.add_child(again)
+	_choice_buttons.append([again, "again"])
 	var menu := Button.new()
 	menu.text = "Menu"
 	menu.custom_minimum_size = Vector2(440, 110)
 	menu.add_theme_font_size_override("font_size", 50)
-	menu.pressed.connect(func(): menu_choice.emit("menu"))
+	menu.pressed.connect(func(): _choose("menu"))
 	row.add_child(menu)
+	_choice_buttons.append([menu, "menu"])
 	_center(box)
 	again.grab_focus()

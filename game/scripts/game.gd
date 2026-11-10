@@ -13,6 +13,7 @@ const CHARACTERS := [
 ]
 
 var player_char := 0
+var mode := "single"       # "story", "single" or "time" (time trial)
 var difficulty := 1        # 0 easy, 1 normal, 2 hard
 var best_time := -1.0
 
@@ -48,6 +49,7 @@ func _setup_inputs() -> void:
 	_add_key("brake", [KEY_S, KEY_DOWN], [JOY_BUTTON_B])
 	_add_key("drift", [KEY_SHIFT, KEY_SPACE], [JOY_BUTTON_RIGHT_SHOULDER], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]])
 	_add_key("pause", [KEY_ESCAPE, KEY_P], [JOY_BUTTON_START])
+	_add_key("use_item", [KEY_E, KEY_Q], [JOY_BUTTON_X, JOY_BUTTON_Y, JOY_BUTTON_LEFT_SHOULDER], [[JOY_AXIS_TRIGGER_LEFT, 1.0]])
 
 
 func save() -> void:

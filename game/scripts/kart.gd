@@ -35,6 +35,13 @@ var in_brake := false
 var in_drift := false
 var frozen := true
 
+# blessings (items)
+var item := ""             # the blessing being held, "" = none
+var item_hold := 0.0       # how long it has been held (the computer waits a little before using it)
+var shield_t := 0.0        # Shield of Faith: no slowdowns from grass or bumps
+var carried_t := 0.0       # carried along (Good Samaritan / Jubilee): fast, safe, steered for you
+var parting_t := 0.0       # Parting of the Sea: the open land is as smooth as the road
+
 var drift_dir := 0
 var drift_charge := 0.0
 var boost_t := 0.0
@@ -63,6 +70,7 @@ var _sparks: Array[GPUParticles3D] = []
 var _spark_mat: StandardMaterial3D
 var _flame: MeshInstance3D
 var _dust: GPUParticles3D
+var _bubble: MeshInstance3D
 
 
 func setup(t: Track, ci: int, player: bool) -> void:
@@ -108,8 +116,17 @@ func boosting() -> bool:
 # ---------------------------------------------------------------- driving
 
 func step(dt: float, race_time: float) -> void:
-	if not is_player and not frozen:
+	if (not is_player or carried_t > 0.0) and not frozen:
 		_ai_think()
+		if carried_t > 0.0:
+			in_drift = false
+	if item != "":
+		item_hold += dt
+	shield_t = maxf(shield_t - dt, 0.0)
+	parting_t = maxf(parting_t - dt, 0.0)
+	if carried_t > 0.0:
+		carried_t -= dt
+		boost_t = maxf(boost_t, 0.2); boost_mul = maxf(boost_mul, 1.6)
 	var top := top_speed()
 	if not is_player:
 		top *= ai_skill
@@ -120,10 +137,14 @@ func step(dt: float, race_time: float) -> void:
 		off = 0.55          # grass
 	elif a > h + 0.3:
 		off = 0.78          # dirt shoulder
+	if shield_t > 0.0 or parting_t > 0.0:
+		off = maxf(off, 0.92)
 	if boost_t > 0.0:
 		boost_t -= dt
 		top *= boost_mul
 		off = maxf(off, 0.95)
+		if boost_t <= 0.0:
+			boost_mul = 1.0
 	top *= off
 
 	if frozen:
@@ -142,7 +163,7 @@ func step(dt: float, race_time: float) -> void:
 	# steering and drifting
 	var turn := TURN * float(stats[2])
 	var sf := clampf(absf(speed) / 9.0, 0.0, 1.0) * (1.0 - 0.3 * clampf(speed / BASE_TOP, 0.0, 1.0))
-	if drift_dir == 0 and in_drift and grounded and absf(in_steer) > 0.3 and speed > 12.0 and not frozen:
+	if drift_dir == 0 and in_drift and grounded and absf(in_steer) > 0.5 and speed > 12.0 and not frozen:
 		drift_dir = 1 if in_steer > 0.0 else -1
 		drift_charge = 0.0
 		vy = 3.8; grounded = false          # a little hop into the drift
@@ -150,13 +171,14 @@ func step(dt: float, race_time: float) -> void:
 		if not in_drift or speed < 8.0:
 			_end_drift()
 		else:
-			var k := 0.75 + 0.45 * in_steer * drift_dir
-			heading -= drift_dir * k * turn * 1.15 * dt
+			# stick toward the drift = tighter, stick away = wider, stick in the middle = a gentle arc
+			var k := 0.42 + 0.38 * in_steer * drift_dir
+			heading -= drift_dir * k * turn * dt
 			drift_charge += dt * (0.8 + 0.6 * absf(in_steer))
 	else:
 		heading -= in_steer * turn * sf * dt * signf(speed if absf(speed) > 0.1 else 1.0)
 	heading = wrapf(heading, -PI, PI)
-	var grip := 2.6 if drift_dir != 0 else 9.0
+	var grip := 5.0 if drift_dir != 0 else 9.0
 	move_heading = lerp_angle(move_heading, heading, clampf(grip * dt, 0.0, 1.0))
 
 	# move
@@ -216,9 +238,13 @@ func _end_drift() -> void:
 	drift_charge = 0.0
 
 
+func give_boost(t: float, mul: float) -> void:
+	_boost(t, mul)
+
+
 func _boost(t: float, mul: float) -> void:
-	boost_t = maxf(boost_t, t)
 	boost_mul = maxf(boost_mul if boost_t > 0.0 else 1.0, mul)
+	boost_t = maxf(boost_t, t)
 	speed = maxf(speed, top_speed() * minf(mul, 1.15))
 
 
@@ -248,7 +274,7 @@ func _collide_scenery(p: Vector3) -> Vector3:
 		if d.length_squared() < r * r and d.length_squared() > 0.0001:
 			var nrm := d.normalized()
 			me = c + nrm * r
-			speed *= 0.55
+			speed *= 0.85 if shield_t > 0.0 else 0.55
 			sound.emit(self, "bump")
 	p.x = me.x
 	p.z = me.y
@@ -402,6 +428,22 @@ func _update_look(dt: float) -> void:
 		_spark_mat.albedo_color = Color(0.35, 0.7, 1.0)
 	else:
 		_spark_mat.albedo_color = Color(1.0, 1.0, 0.85)
+	if _bubble == null:
+		_bubble = MeshInstance3D.new()
+		var sm := SphereMesh.new(); sm.radius = 1.7; sm.height = 2.6
+		_bubble.mesh = sm
+		var bm := StandardMaterial3D.new()
+		bm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		bm.albedo_color = Color(1.0, 0.85, 0.35, 0.18)
+		bm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		bm.emission_enabled = true; bm.emission = Color(1.0, 0.8, 0.3); bm.emission_energy_multiplier = 0.8
+		bm.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_bubble.material_override = bm
+		_bubble.position = Vector3(0, 0.9, 0)
+		add_child(_bubble)
+	_bubble.visible = shield_t > 0.0 or carried_t > 0.0
+	if _bubble.visible:
+		_bubble.scale = Vector3.ONE * (1.0 + 0.04 * sin(Time.get_ticks_msec() * 0.01))
 	_flame.visible = boost_t > 0.0
 	if _flame.visible:
 		_flame.scale = Vector3.ONE * (0.8 + 0.3 * sin(Time.get_ticks_msec() * 0.05))
