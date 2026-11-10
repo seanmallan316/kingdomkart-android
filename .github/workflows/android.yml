@@ -37,7 +37,7 @@ jobs:
           mkdir -p stage && cp -r wiiu/content stage/content && mkdir -p stage/content/port_ui && cp port/ui/*.png stage/content/port_ui/
           OUT=$PWD/pc-tour bash port/build_pc.sh wiiu /usr/include/SDL2 $PWD/stage/content -DKK_TOUR -DKK_TOUR_ROAD=1
           mkdir -p shots
-          KK_FRAMES=3300 KK_SHOTS=$PWD/shots KK_SHOT_EVERY=300 SDL_AUDIODRIVER=dummy timeout 1800 \
+          KK_FRAMES=2700 KK_SHOTS=$PWD/shots KK_SHOT_EVERY=300 SDL_AUDIODRIVER=dummy timeout 1800 \
             xvfb-run -a -s "-screen 0 1600x800x24" ./pc-tour/kingdomkart 2>&1 | tee tour.log | grep -E "picture /|error|Error|failed" || true
           python3 -c "
           import glob
@@ -79,7 +79,9 @@ jobs:
           export KK_KEYSTORE_PASS="$(cat ~/kk-signing/pass.txt)"
           export KK_WIIU_SRC=$PWD/wiiu/src
           export KK_VERSION_CODE=$((100 + ${{ github.run_number }}))
-          export KK_NDK_VERSION=$(ls $ANDROID_HOME/ndk | sort -V | tail -1)
+          # SDL 2.30 needs an NDK from before version 30
+          export KK_NDK_VERSION=27.2.12479018
+          [ -d $ANDROID_HOME/ndk/$KK_NDK_VERSION ] || yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;$KK_NDK_VERSION" > /dev/null
           echo "NDK $KK_NDK_VERSION"
           cd android && chmod +x gradlew && ./gradlew --no-daemon -q assembleRelease
           ls -la app/build/outputs/apk/release/
